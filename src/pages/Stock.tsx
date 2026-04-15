@@ -1,31 +1,102 @@
-import { useState } from 'react'
-import { Package, AlertCircle, TrendingUp, Plus, Search, Edit2, Truck, CheckCircle, XCircle } from 'lucide-react'
+import { useState, useEffect } from 'react'
+import { Package, AlertCircle, TrendingUp, Plus, Search, Edit2, Truck, CheckCircle, XCircle, RefreshCw, Save, X } from 'lucide-react'
 import type { Ingredient, SupplyOrder } from '../types'
-
-const demoIngredients: Ingredient[] = [
-  { id: 1, name: 'Зерна кофе (арабика)', unit: 'кг', stock_quantity: 5.2, min_stock_level: 3, unit_cost: 1200, category: 'Кофе' },
-  { id: 2, name: 'Молоко 3.2%', unit: 'л', stock_quantity: 8.5, min_stock_level: 5, unit_cost: 85, category: 'Молочные' },
-  { id: 3, name: 'Сахар', unit: 'кг', stock_quantity: 2.1, min_stock_level: 1, unit_cost: 60, category: 'Бакалея' },
-  { id: 4, name: 'Мука', unit: 'кг', stock_quantity: 1.5, min_stock_level: 2, unit_cost: 50, category: 'Бакалея' },
-  { id: 5, name: 'Масло сливочное', unit: 'кг', stock_quantity: 0.8, min_stock_level: 1, unit_cost: 400, category: 'Молочные' },
-  { id: 6, name: 'Яйца', unit: 'шт', stock_quantity: 30, min_stock_level: 20, unit_cost: 10, category: 'Бакалея' },
-  { id: 7, name: 'Сироп карамельный', unit: 'л', stock_quantity: 1.2, min_stock_level: 0.5, unit_cost: 350, category: 'Сиропы' },
-  { id: 8, name: 'Какао-порошок', unit: 'кг', stock_quantity: 0.6, min_stock_level: 0.5, unit_cost: 500, category: 'Кофе' },
-]
-
-const demoSupplies: SupplyOrder[] = [
-  { id: 1, supplier_id: 1, supplier_name: 'CoffeeImport', status: 'pending', total_cost: 15000, created_by: 1, created_by_name: 'Иван', created_at: '2024-04-08', items: [] },
-  { id: 2, supplier_id: 2, supplier_name: 'МолПродукт', status: 'approved', total_cost: 8500, created_by: 1, created_by_name: 'Иван', created_at: '2024-04-07', items: [] },
-]
+import api from '../services/api'
+import toast from 'react-hot-toast'
 
 export default function Stock() {
   const [activeTab, setActiveTab] = useState<'ingredients' | 'orders'>('ingredients')
   const [searchTerm, setSearchTerm] = useState('')
   const [selectedCategory, setSelectedCategory] = useState('all')
+  const [ingredients, setIngredients] = useState<Ingredient[]>([])
+  const [loading, setLoading] = useState(true)
+  const [refreshing, setRefreshing] = useState(false)
+  const [lastUpdate, setLastUpdate] = useState(new Date())
+  const [editingId, setEditingId] = useState<number | null>(null)
+  const [editValue, setEditValue] = useState<number>(0)
+  const [editOperation, setEditOperation] = useState<'set' | 'add' | 'subtract'>('set')
 
-  const categories = ['all', ...new Set(demoIngredients.map(i => i.category))]
+  // Функция загрузки ингредиентов из API
+  const fetchIngredients = async () => {
+    try {
+      const response = await api.get('/stock/ingredients')
+      setIngredients(response.data.data || [])
+      setLastUpdate(new Date())
+    } catch (error) {
+      console.error('Error fetching ingredients:', error)
+      toast.error('Ошибка загрузки ингредиентов')
+    } finally {
+      setLoading(false)
+      setRefreshing(false)
+    }
+  }
 
-  const filteredIngredients = demoIngredients.filter(ingredient => {
+  // Функция обновления количества ингредиента
+  const updateIngredientStock = async (id: number, quantity: number, operation: 'set' | 'add' | 'subtract') => {
+    try {
+      const response = await api.patch(`/stock/ingredients/${id}`, null, {
+        params: { quantity, operation }
+      })
+      
+      if (response.data.success) {
+        toast.success('Остаток обновлен')
+        fetchIngredients() // Обновляем список
+        setEditingId(null)
+      } else {
+        toast.error(response.data.message || 'Ошибка обновления')
+      }
+    } catch (error: any) {
+      console.error('Error updating stock:', error)
+      toast.error(error.response?.data?.detail || 'Ошибка обновления')
+    }
+  }
+
+  // Ручное обновление
+  const handleRefresh = async () => {
+    setRefreshing(true)
+    await fetchIngredients()
+    toast.success('Данные обновлены')
+  }
+
+  // Начать редактирование
+  const startEdit = (ingredient: Ingredient) => {
+    setEditingId(ingredient.id)
+    setEditValue(ingredient.stock_quantity)
+    setEditOperation('set')
+  }
+
+  // Отмена редактирования
+  const cancelEdit = () => {
+    setEditingId(null)
+    setEditValue(0)
+    setEditOperation('set')
+  }
+
+  // Сохранение изменений
+  const saveEdit = (id: number) => {
+    if (editValue < 0) {
+      toast.error('Количество не может быть отрицательным')
+      return
+    }
+    updateIngredientStock(id, editValue, editOperation)
+  }
+
+  // Загружаем ингредиенты при монтировании компонента
+  useEffect(() => {
+    fetchIngredients()
+    
+    // Автообновление каждые 30 секунд
+    const interval = setInterval(() => {
+      fetchIngredients()
+    }, 30000)
+    
+    return () => clearInterval(interval)
+  }, [])
+
+  // Получаем уникальные категории из ингредиентов
+  const categories = ['all', ...new Set(ingredients.map(i => i.category))]
+
+  const filteredIngredients = ingredients.filter(ingredient => {
     const matchesSearch = ingredient.name.toLowerCase().includes(searchTerm.toLowerCase())
     const matchesCategory = selectedCategory === 'all' || ingredient.category === selectedCategory
     return matchesSearch && matchesCategory
@@ -37,6 +108,17 @@ export default function Stock() {
     return { color: 'text-green-600', bg: 'bg-green-100', text: 'Норма' }
   }
 
+  const lowStockCount = ingredients.filter(i => i.stock_quantity <= i.min_stock_level).length
+  const totalCost = ingredients.reduce((sum, i) => sum + (i.stock_quantity * i.unit_cost), 0)
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-96">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-600"></div>
+      </div>
+    )
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -44,10 +126,31 @@ export default function Stock() {
           <h2 className="text-2xl font-bold text-gray-800">Склад</h2>
           <p className="text-gray-500">Управление ингредиентами и поставками</p>
         </div>
-        <button className="btn-primary flex items-center gap-2">
-          <Plus className="w-5 h-5" />
-          Новый заказ
-        </button>
+        <div className="flex gap-2">
+          <button 
+            onClick={handleRefresh} 
+            disabled={refreshing}
+            className="btn-secondary flex items-center gap-2"
+          >
+            <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} />
+            Обновить
+          </button>
+          <button className="btn-primary flex items-center gap-2">
+            <Plus className="w-5 h-5" />
+            Новый заказ
+          </button>
+        </div>
+      </div>
+
+      {/* Индикатор автообновления */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2 text-xs text-gray-400">
+          <div className="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse"></div>
+          <span>Автообновление каждые 30 секунд</span>
+        </div>
+        <div className="text-xs text-gray-400">
+          Последнее обновление: {lastUpdate.toLocaleTimeString()}
+        </div>
       </div>
 
       {/* Статистика */}
@@ -56,7 +159,7 @@ export default function Stock() {
           <div className="flex items-center justify-between">
             <div>
               <p className="text-sm text-gray-500">Всего ингредиентов</p>
-              <p className="text-2xl font-bold text-gray-800">{demoIngredients.length}</p>
+              <p className="text-2xl font-bold text-gray-800">{ingredients.length}</p>
             </div>
             <Package className="w-8 h-8 text-primary-500" />
           </div>
@@ -65,7 +168,7 @@ export default function Stock() {
           <div className="flex items-center justify-between">
             <div>
               <p className="text-sm text-gray-500">Критический запас</p>
-              <p className="text-2xl font-bold text-red-600">{demoIngredients.filter(i => i.stock_quantity <= i.min_stock_level).length}</p>
+              <p className="text-2xl font-bold text-red-600">{lowStockCount}</p>
             </div>
             <AlertCircle className="w-8 h-8 text-red-500" />
           </div>
@@ -74,7 +177,7 @@ export default function Stock() {
           <div className="flex items-center justify-between">
             <div>
               <p className="text-sm text-gray-500">Общая стоимость</p>
-              <p className="text-2xl font-bold text-gray-800">45,230 ₽</p>
+              <p className="text-2xl font-bold text-gray-800">{Math.round(totalCost).toLocaleString()} ₽</p>
             </div>
             <TrendingUp className="w-8 h-8 text-green-500" />
           </div>
@@ -156,11 +259,39 @@ export default function Stock() {
               <tbody className="divide-y divide-gray-200">
                 {filteredIngredients.map((ingredient) => {
                   const status = getStockStatus(ingredient.stock_quantity, ingredient.min_stock_level)
+                  const isEditing = editingId === ingredient.id
+                  
                   return (
                     <tr key={ingredient.id} className="hover:bg-gray-50 transition-colors">
                       <td className="px-6 py-4 font-medium text-gray-800">{ingredient.name}</td>
                       <td className="px-6 py-4 text-gray-600">{ingredient.category}</td>
-                      <td className="px-6 py-4 text-gray-600">{ingredient.stock_quantity} {ingredient.unit}</td>
+                      <td className="px-6 py-4">
+                        {isEditing ? (
+                          <div className="flex items-center gap-2">
+                            <select
+                              value={editOperation}
+                              onChange={(e) => setEditOperation(e.target.value as any)}
+                              className="input-field w-24 text-sm py-1"
+                            >
+                              <option value="set">Установить</option>
+                              <option value="add">Добавить</option>
+                              <option value="subtract">Списать</option>
+                            </select>
+                            <input
+                              type="number"
+                              step="0.01"
+                              value={editValue}
+                              onChange={(e) => setEditValue(parseFloat(e.target.value))}
+                              className="input-field w-28 text-sm py-1"
+                            />
+                            <span className="text-sm text-gray-500">{ingredient.unit}</span>
+                          </div>
+                        ) : (
+                          <span className={`font-medium ${status.color}`}>
+                            {ingredient.stock_quantity} {ingredient.unit}
+                          </span>
+                        )}
+                      </td>
                       <td className="px-6 py-4 text-gray-600">{ingredient.min_stock_level} {ingredient.unit}</td>
                       <td className="px-6 py-4">
                         <span className={`badge ${status.bg} ${status.color}`}>
@@ -169,9 +300,32 @@ export default function Stock() {
                       </td>
                       <td className="px-6 py-4 text-gray-600">{ingredient.unit_cost} ₽/{ingredient.unit}</td>
                       <td className="px-6 py-4">
-                        <button className="p-1 text-blue-600 hover:bg-blue-50 rounded transition-colors">
-                          <Edit2 className="w-4 h-4" />
-                        </button>
+                        {isEditing ? (
+                          <div className="flex gap-1">
+                            <button
+                              onClick={() => saveEdit(ingredient.id)}
+                              className="p-1 text-green-600 hover:bg-green-50 rounded transition-colors"
+                              title="Сохранить"
+                            >
+                              <Save className="w-4 h-4" />
+                            </button>
+                            <button
+                              onClick={cancelEdit}
+                              className="p-1 text-gray-600 hover:bg-gray-50 rounded transition-colors"
+                              title="Отмена"
+                            >
+                              <X className="w-4 h-4" />
+                            </button>
+                          </div>
+                        ) : (
+                          <button
+                            onClick={() => startEdit(ingredient)}
+                            className="p-1 text-blue-600 hover:bg-blue-50 rounded transition-colors"
+                            title="Редактировать"
+                          >
+                            <Edit2 className="w-4 h-4" />
+                          </button>
+                        )}
                       </td>
                     </tr>
                   )
@@ -179,58 +333,20 @@ export default function Stock() {
               </tbody>
             </table>
           </div>
+
+          {filteredIngredients.length === 0 && (
+            <div className="text-center py-12">
+              <Package className="w-16 h-16 text-gray-300 mx-auto mb-4" />
+              <p className="text-gray-500">Ингредиенты не найдены</p>
+            </div>
+          )}
         </>
       )}
 
       {activeTab === 'orders' && (
-        <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-x-auto">
-          <table className="w-full">
-            <thead className="bg-gray-50 border-b border-gray-200">
-              <tr>
-                <th className="text-left px-6 py-3 text-xs font-medium text-gray-500 uppercase">№ заказа</th>
-                <th className="text-left px-6 py-3 text-xs font-medium text-gray-500 uppercase">Поставщик</th>
-                <th className="text-left px-6 py-3 text-xs font-medium text-gray-500 uppercase">Дата</th>
-                <th className="text-left px-6 py-3 text-xs font-medium text-gray-500 uppercase">Сумма</th>
-                <th className="text-left px-6 py-3 text-xs font-medium text-gray-500 uppercase">Статус</th>
-                <th className="text-left px-6 py-3 text-xs font-medium text-gray-500 uppercase">Действия</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-200">
-              {demoSupplies.map((order) => (
-                <tr key={order.id} className="hover:bg-gray-50 transition-colors">
-                  <td className="px-6 py-4 font-mono font-medium text-gray-800">#{order.id}</td>
-                  <td className="px-6 py-4 text-gray-600">{order.supplier_name}</td>
-                  <td className="px-6 py-4 text-gray-600">{order.created_at}</td>
-                  <td className="px-6 py-4 font-medium text-gray-800">{order.total_cost.toLocaleString()} ₽</td>
-                  <td className="px-6 py-4">
-                    <span className={`badge ${
-                      order.status === 'pending' ? 'badge-warning' :
-                      order.status === 'approved' ? 'badge-info' :
-                      order.status === 'received' ? 'badge-success' : 'badge-danger'
-                    }`}>
-                      {order.status === 'pending' ? 'В обработке' :
-                       order.status === 'approved' ? 'Подтвержден' :
-                       order.status === 'received' ? 'Получен' : 'Отменен'}
-                    </span>
-                  </td>
-                  <td className="px-6 py-4">
-                    <div className="flex gap-2">
-                      {order.status === 'pending' && (
-                        <>
-                          <button className="p-1 text-green-600 hover:bg-green-50 rounded">
-                            <CheckCircle className="w-4 h-4" />
-                          </button>
-                          <button className="p-1 text-red-600 hover:bg-red-50 rounded">
-                            <XCircle className="w-4 h-4" />
-                          </button>
-                        </>
-                      )}
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        <div className="text-center py-12">
+          <Truck className="w-16 h-16 text-gray-300 mx-auto mb-4" />
+          <p className="text-gray-500">Модуль заказов поставщикам в разработке</p>
         </div>
       )}
     </div>

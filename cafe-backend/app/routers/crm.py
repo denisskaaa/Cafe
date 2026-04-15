@@ -10,6 +10,21 @@ from app.routers.auth import get_current_user
 
 router = APIRouter(prefix="/crm", tags=["CRM"])
 
+# Функция преобразования Customer в словарь
+def customer_to_dict(customer: Customer) -> dict:
+    return {
+        "id": customer.id,
+        "name": customer.name,
+        "phone": customer.phone,
+        "email": customer.email,
+        "bonus_points": customer.bonus_points,
+        "loyalty_tier": customer.loyalty_tier,
+        "total_spent": float(customer.total_spent) if customer.total_spent else 0,
+        "total_orders": customer.total_orders or 0,
+        "registered_at": customer.registered_at.isoformat() if customer.registered_at else None,
+        "last_visit": customer.last_visit.isoformat() if customer.last_visit else None
+    }
+
 @router.get("/customers", response_model=ApiResponse)
 async def get_customers(
     page: int = Query(1, ge=1),
@@ -35,10 +50,13 @@ async def get_customers(
     total_result = await db.execute(select(func.count()).select_from(Customer))
     total = total_result.scalar()
     
+    # Преобразуем каждого клиента в словарь
+    items = [customer_to_dict(customer) for customer in customers]
+    
     return ApiResponse(
         success=True,
         data={
-            "items": customers,
+            "items": items,
             "total": total,
             "page": page,
             "per_page": per_page
@@ -60,7 +78,7 @@ async def create_customer(
     await db.commit()
     await db.refresh(new_customer)
     
-    return ApiResponse(success=True, data=new_customer, message="Клиент добавлен")
+    return ApiResponse(success=True, data=customer_to_dict(new_customer), message="Клиент добавлен")
 
 @router.post("/customers/{customer_id}/bonus", response_model=ApiResponse)
 async def add_bonus_points(
@@ -88,4 +106,4 @@ async def add_bonus_points(
     
     await db.commit()
     
-    return ApiResponse(success=True, data=customer, message=f"Начислено {points} бонусов")
+    return ApiResponse(success=True, data=customer_to_dict(customer), message=f"Начислено {points} бонусов")

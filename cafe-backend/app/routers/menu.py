@@ -9,6 +9,19 @@ from app.routers.auth import get_current_user
 
 router = APIRouter(prefix="/menu", tags=["Menu"])
 
+# Функция преобразования MenuItem в словарь
+def menu_item_to_dict(item: MenuItem) -> dict:
+    return {
+        "id": item.id,
+        "name": item.name,
+        "category": item.category,
+        "category_id": item.category_id,
+        "price": float(item.price),
+        "is_available": item.is_available,
+        "description": item.description,
+        "preparation_time": item.preparation_time
+    }
+
 @router.get("/items", response_model=ApiResponse)
 async def get_menu_items(
     category: str = None,
@@ -28,7 +41,10 @@ async def get_menu_items(
     result = await db.execute(query.order_by(MenuItem.category, MenuItem.name))
     items = result.scalars().all()
     
-    return ApiResponse(success=True, data=items)
+    # Преобразуем каждый элемент в словарь
+    data = [menu_item_to_dict(item) for item in items]
+    
+    return ApiResponse(success=True, data=data)
 
 @router.get("/items/{item_id}", response_model=ApiResponse)
 async def get_menu_item(
@@ -43,7 +59,7 @@ async def get_menu_item(
     if not item:
         raise HTTPException(status_code=404, detail="Menu item not found")
     
-    return ApiResponse(success=True, data=item)
+    return ApiResponse(success=True, data=menu_item_to_dict(item))
 
 @router.post("/items", response_model=ApiResponse)
 async def create_menu_item(
@@ -60,7 +76,7 @@ async def create_menu_item(
     await db.commit()
     await db.refresh(new_item)
     
-    return ApiResponse(success=True, data=new_item, message="Позиция добавлена")
+    return ApiResponse(success=True, data=menu_item_to_dict(new_item), message="Позиция добавлена")
 
 @router.patch("/items/{item_id}/availability", response_model=ApiResponse)
 async def toggle_item_availability(
@@ -80,4 +96,4 @@ async def toggle_item_availability(
     await db.commit()
     
     status_text = "доступна" if is_available else "недоступна"
-    return ApiResponse(success=True, data=item, message=f"Позиция {status_text}")
+    return ApiResponse(success=True, data=menu_item_to_dict(item), message=f"Позиция {status_text}")

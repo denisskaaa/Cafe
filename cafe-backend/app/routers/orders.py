@@ -7,6 +7,7 @@ from app.database import get_db
 from app.models.models import Order, Employee, Customer, OrderStatus
 from app.schemas.schemas import OrderCreate, ApiResponse
 from app.routers.auth import get_current_user
+from app.models.models import Recipe, Ingredient
 
 router = APIRouter(prefix="/orders", tags=["Orders"])
 
@@ -89,13 +90,67 @@ async def get_order(
     
     return ApiResponse(success=True, data=order_to_dict(order))
 
+async def deduct_ingredients(db: AsyncSession, items: list):
+    """Списание ингредиентов при создании заказа"""
+    deductions = []
+    
+    for order_item in items:
+        menu_item_id = order_item.get('menu_item_id')
+        quantity = order_item.get('quantity', 1)
+        
+        # Получаем рецепт блюда
+        result = await db.execute(
+            select(Recipe).where(Recipe.menu_item_id == menu_item_id)
+        )
+        recipes = result.scalars().all()
+        
+        # Если рецепта нет, пропускаем (не все блюда могут требовать ингредиенты)
+        if not recipes:
+            continue
+        
+        for recipe in recipes:
+            # Получаем ингредиент
+            ing_result = await db.execute(
+                select(Ingredient).where(Ingredient.id == recipe.ingredient_id)
+            )
+            ingredient = ing_result.scalar_one()
+            
+            # Рассчитываем сколько нужно списать
+            required = recipe.quantity * quantity
+            
+            # Проверяем достаточно ли ингредиентов
+            if ingredient.stock_quantity < required:
+                raise HTTPException(
+                    status_code=400, 
+                    detail=f"Недостаточно ингредиента: {ingredient.name}. Нужно: {required}, в наличии: {ingredient.stock_quantity}"
+                )
+            
+            # Списание
+            ingredient.stock_quantity -= required
+            deductions.append({
+                "ingredient": ingredient.name,
+                "deducted": required,
+                "remaining": round(ingredient.stock_quantity, 2)
+            })
+    
+    return deductions
+
+
 @router.post("/", response_model=ApiResponse)
 async def create_order(
     order_data: OrderCreate,
     db: AsyncSession = Depends(get_db),
     current_user: Employee = Depends(get_current_user)
 ):
-    """Создание нового заказа"""
+    """Создание нового заказа с автоматическим списанием ингредиентов"""
+    
+    # 1. Проверяем и списываем ингредиенты
+    try:
+        deductions = await deduct_ingredients(db, order_data.items)
+    except HTTPException as e:
+        return ApiResponse(success=False, error=e.detail, message="Ошибка при проверке ингредиентов")
+    
+    # 2. Создаем заказ
     order_number = f"ORD{int(datetime.now().timestamp())}"
     total_amount = sum(item.get('total', 0) for item in order_data.items)
     
@@ -114,7 +169,7 @@ async def create_order(
     await db.commit()
     await db.refresh(new_order)
     
-    # Обновляем статистику клиента если есть
+    # 3. Обновляем статистику клиента если есть
     if order_data.customer_id:
         customer_result = await db.execute(select(Customer).where(Customer.id == order_data.customer_id))
         customer = customer_result.scalar_one_or_none()
@@ -124,7 +179,27 @@ async def create_order(
             customer.last_visit = datetime.now()
             await db.commit()
     
-    return ApiResponse(success=True, data=order_to_dict(new_order), message="Заказ успешно создан")
+    # 4. Формируем ответ
+    order_dict = {
+        "id": new_order.id,
+        "order_number": new_order.order_number,
+        "type": new_order.type.value if hasattr(new_order.type, 'value') else new_order.type,
+        "status": new_order.status.value if hasattr(new_order.status, 'value') else new_order.status,
+        "total_amount": float(new_order.total_amount),
+        "items": new_order.items,
+        "customer_id": new_order.customer_id,
+        "employee_id": new_order.employee_id,
+        "created_at": new_order.created_at.isoformat() if new_order.created_at else None
+    }
+    
+    return ApiResponse(
+        success=True, 
+        data={
+            "order": order_dict,
+            "stock_deductions": deductions
+        }, 
+        message=f"Заказ #{order_number} успешно создан. Ингредиенты списаны."
+    )
 
 @router.patch("/{order_id}/status", response_model=ApiResponse)
 async def update_order_status(
@@ -167,3 +242,106 @@ async def cancel_order(
     await db.refresh(order)
     
     return ApiResponse(success=True, data=order_to_dict(order), message="Заказ отменен")
+
+async def deduct_ingredients(db: AsyncSession, items: list):
+    """Списание ингредиентов при создании заказа"""
+    deductions = []
+    
+    for order_item in items:
+        menu_item_id = order_item.get('menu_item_id')
+        quantity = order_item.get('quantity', 1)
+        
+        # Получаем рецепт блюда
+        result = await db.execute(
+            select(Recipe).where(Recipe.menu_item_id == menu_item_id)
+        )
+        recipes = result.scalars().all()
+        
+        for recipe in recipes:
+            # Получаем ингредиент
+            ing_result = await db.execute(
+                select(Ingredient).where(Ingredient.id == recipe.ingredient_id)
+            )
+            ingredient = ing_result.scalar_one()
+            
+            # Рассчитываем сколько нужно списать
+            required = recipe.quantity * quantity
+            
+            if ingredient.stock_quantity < required:
+                raise HTTPException(
+                    status_code=400, 
+                    detail=f"Недостаточно ингредиента: {ingredient.name}"
+                )
+            
+            # Списание
+            ingredient.stock_quantity -= required
+            deductions.append({
+                "ingredient": ingredient.name,
+                "deducted": required,
+                "remaining": ingredient.stock_quantity
+            })
+    
+    return deductions
+
+@router.get("/check-availability/{menu_item_id}", response_model=ApiResponse)
+async def check_item_availability(
+    menu_item_id: int,
+    quantity: int = 1,
+    db: AsyncSession = Depends(get_db),
+    current_user: Employee = Depends(get_current_user)
+):
+    """Проверка возможности приготовления блюда"""
+    result = await db.execute(
+        select(Recipe).where(Recipe.menu_item_id == menu_item_id)
+    )
+    recipes = result.scalars().all()
+    
+    # Если рецепта нет, блюдо всегда доступно
+    if not recipes:
+        return ApiResponse(
+            success=True,
+            data={
+                "available": True,
+                "message": "Для этого блюда не требуется ингредиентов"
+            }
+        )
+    
+    availability = []
+    can_make = True
+    missing_ingredients = []
+    
+    for recipe in recipes:
+        ing_result = await db.execute(
+            select(Ingredient).where(Ingredient.id == recipe.ingredient_id)
+        )
+        ingredient = ing_result.scalar_one()
+        
+        required = recipe.quantity * quantity
+        available = ingredient.stock_quantity >= required
+        
+        availability.append({
+            "ingredient": ingredient.name,
+            "required": round(required, 2),
+            "available": round(ingredient.stock_quantity, 2),
+            "unit": ingredient.unit,
+            "sufficient": available
+        })
+        
+        if not available:
+            can_make = False
+            missing_ingredients.append({
+                "name": ingredient.name,
+                "required": round(required, 2),
+                "available": round(ingredient.stock_quantity, 2),
+                "unit": ingredient.unit
+            })
+    
+    return ApiResponse(
+        success=True,
+        data={
+            "available": can_make,
+            "can_make": can_make,
+            "ingredients": availability,
+            "missing_ingredients": missing_ingredients if not can_make else None
+        }
+    )

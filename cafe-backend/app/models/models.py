@@ -102,6 +102,7 @@ class Ingredient(Base):
     stock_quantity = Column(Float, default=0)
     min_stock_level = Column(Float, default=0)
     unit_cost = Column(Float, nullable=False)
+    recipes = relationship("Recipe", back_populates="ingredient")
 
 class MenuItem(Base):
     __tablename__ = "menu_items"
@@ -114,3 +115,15 @@ class MenuItem(Base):
     is_available = Column(Boolean, default=True)
     description = Column(String(500), nullable=True)
     preparation_time = Column(Integer, default=5)
+    recipes = relationship("Recipe", back_populates="menu_item", cascade="all, delete-orphan")
+class Recipe(Base):
+    __tablename__ = "recipes"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    menu_item_id = Column(Integer, ForeignKey("menu_items.id"), nullable=False)
+    ingredient_id = Column(Integer, ForeignKey("ingredients.id"), nullable=False)
+    quantity = Column(Float, nullable=False)  # количество ингредиента на порцию
+    
+    # Отношения
+    menu_item = relationship("MenuItem", back_populates="recipes")
+    ingredient = relationship("Ingredient", back_populates="recipes")

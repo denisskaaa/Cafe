@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.routers import auth, orders, staff, stock, crm, analytics, menu
+from app.routers import auth, orders, staff, stock, crm, analytics, menu, recipes
 
 app = FastAPI(
     title="CaféManager API",
@@ -28,6 +28,7 @@ app.include_router(stock.router, prefix="/api")
 app.include_router(crm.router, prefix="/api")
 app.include_router(analytics.router, prefix="/api")
 app.include_router(menu.router, prefix="/api")
+app.include_router(recipes.router, prefix="/api")
 
 @app.get("/")
 async def root():

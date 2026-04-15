@@ -9,6 +9,18 @@ from app.routers.auth import get_current_user
 
 router = APIRouter(prefix="/stock", tags=["Stock"])
 
+# Функция преобразования Ingredient в словарь
+def ingredient_to_dict(ingredient: Ingredient) -> dict:
+    return {
+        "id": ingredient.id,
+        "name": ingredient.name,
+        "category": ingredient.category,
+        "unit": ingredient.unit,
+        "stock_quantity": float(ingredient.stock_quantity),
+        "min_stock_level": float(ingredient.min_stock_level),
+        "unit_cost": float(ingredient.unit_cost)
+    }
+
 @router.get("/ingredients", response_model=ApiResponse)
 async def get_ingredients(
     db: AsyncSession = Depends(get_db),
@@ -17,7 +29,11 @@ async def get_ingredients(
     """Получение списка всех ингредиентов"""
     result = await db.execute(select(Ingredient))
     ingredients = result.scalars().all()
-    return ApiResponse(success=True, data=ingredients)
+    
+    # Преобразуем каждый ингредиент в словарь
+    data = [ingredient_to_dict(ing) for ing in ingredients]
+    
+    return ApiResponse(success=True, data=data)
 
 @router.get("/ingredients/low-stock", response_model=ApiResponse)
 async def get_low_stock_ingredients(
@@ -31,7 +47,10 @@ async def get_low_stock_ingredients(
         )
     )
     ingredients = result.scalars().all()
-    return ApiResponse(success=True, data=ingredients)
+    
+    data = [ingredient_to_dict(ing) for ing in ingredients]
+    
+    return ApiResponse(success=True, data=data)
 
 @router.patch("/ingredients/{ingredient_id}", response_model=ApiResponse)
 async def update_ingredient_stock(
@@ -57,4 +76,4 @@ async def update_ingredient_stock(
     
     await db.commit()
     
-    return ApiResponse(success=True, data=ingredient, message="Остаток обновлен")
+    return ApiResponse(success=True, data=ingredient_to_dict(ingredient), message="Остаток обновлен")
